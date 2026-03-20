@@ -13,26 +13,37 @@ app = Flask(__name__)
 MODEL_PATH = "best.pt"
 
 FILE_ID = "122HAvIL6ZQkNtj_oxUuVDvzjEwjXLlTy"
-DOWNLOAD_URL = f"https://drive.google.com/uc?id={FILE_ID}"
+DOWNLOAD_URL = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
+
 
 def download_model():
 
     if os.path.exists(MODEL_PATH):
-        print("✅ Model already exists")
+        print("✅ Model already present")
         return
 
     print("⬇ Downloading model from Google Drive...")
 
-    r = requests.get(DOWNLOAD_URL, stream=True)
+    session = requests.Session()
+    response = session.get(DOWNLOAD_URL, stream=True)
+
+    # handle large file confirmation
+    for key, value in response.cookies.items():
+        if key.startswith("download_warning"):
+            confirm_url = DOWNLOAD_URL + "&confirm=" + value
+            response = session.get(confirm_url, stream=True)
 
     with open(MODEL_PATH, "wb") as f:
-        for chunk in r.iter_content(1024*1024):
+        for chunk in response.iter_content(1024 * 1024):
             if chunk:
                 f.write(chunk)
 
-    print("✅ Model Downloaded")
+    print("✅ Model downloaded successfully")
+
 
 download_model()
+
+# ================= LOAD MODEL =================
 
 print("🚀 Loading YOLO model...")
 model = YOLO(MODEL_PATH)
@@ -46,6 +57,7 @@ HUMAN_SIZE_TH = 0.01
 VOTE_REQUIRED = 2
 
 # ================= VERIFY =================
+
 
 def verify_detection(results):
 
@@ -78,11 +90,13 @@ def verify_detection(results):
 
     return detections
 
+
 # ================= ROUTES =================
 
 @app.route("/")
 def home():
     return "Wildlife RGB AI Running"
+
 
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -92,41 +106,63 @@ def predict():
     if "image" not in request.files:
         return jsonify({"error": "no image"}), 400
 
-    file = request.files["image"].read()
+    try:
+        file = request.files["image"].read()
 
-    img = cv2.imdecode(np.frombuffer(file, np.uint8), cv2.IMREAD_COLOR)
+        img = cv2.imdecode(
+            np.frombuffer(file, np.uint8),
+            cv2.IMREAD_COLOR
+        )
 
-    votes = {0:0,1:0}
+        if img is None:
+            return jsonify({"error": "invalid image"}), 400
 
+    except:
+        return jsonify({"error": "decode failed"}), 400
+
+    votes = {0: 0, 1: 0}
+
+    # frame voting
     for i in range(3):
 
-        results = model(img, imgsz=416, conf=0.25, verbose=False)
+        results = model(
+            img,
+            imgsz=416,
+            conf=0.25,
+            verbose=False
+        )
 
         dets = verify_detection(results)
 
         for d in dets:
-            votes[d]+=1
+            votes[d] += 1
 
-    label="uncertain"
+    label = "uncertain"
 
     if votes[0] >= VOTE_REQUIRED:
-        label="elephant"
+        label = "elephant"
 
     elif votes[1] >= VOTE_REQUIRED:
-        label="human"
+        label = "human"
 
-    latency = round(time.time()-start,3)
+    latency = round(time.time() - start, 3)
+
+    print("Votes:", votes, "Result:", label)
 
     return jsonify({
-        "label":label,
-        "votes":votes,
-        "latency":latency
+        "label": label,
+        "votes": votes,
+        "latency": latency
     })
+
 
 # ================= RUN =================
 
 if __name__ == "__main__":
 
-    port = int(os.environ.get("PORT",10000))
+    port = int(os.environ.get("PORT", 10000))
 
-    app.run(host="0.0.0.0",port=port)
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
