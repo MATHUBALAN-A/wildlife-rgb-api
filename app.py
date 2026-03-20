@@ -8,13 +8,14 @@ import requests
 
 app = Flask(__name__)
 
-# ================= MODEL DOWNLOAD =================
+# ================= MODEL CONFIG =================
 
 MODEL_PATH = "best.pt"
 
 FILE_ID = "122HAvIL6ZQkNtj_oxUuVDvzjEwjXLlTy"
 DOWNLOAD_URL = f"https://drive.google.com/uc?export=download&id={FILE_ID}"
 
+# ================= MODEL DOWNLOAD =================
 
 def download_model():
 
@@ -33,10 +34,19 @@ def download_model():
             confirm_url = DOWNLOAD_URL + "&confirm=" + value
             response = session.get(confirm_url, stream=True)
 
+    if response.status_code != 200:
+        raise RuntimeError("❌ Model download failed")
+
     with open(MODEL_PATH, "wb") as f:
         for chunk in response.iter_content(1024 * 1024):
             if chunk:
                 f.write(chunk)
+
+    size = os.path.getsize(MODEL_PATH)
+    print("Downloaded size:", size)
+
+    if size < 10000000:
+        raise RuntimeError("❌ Downloaded file is not valid model")
 
     print("✅ Model downloaded successfully")
 
@@ -57,7 +67,6 @@ HUMAN_SIZE_TH = 0.01
 VOTE_REQUIRED = 2
 
 # ================= VERIFY =================
-
 
 def verify_detection(results):
 
@@ -82,21 +91,21 @@ def verify_detection(results):
 
             area = (w * h) / (H * W)
 
+            # elephant rule
             if cls == 0 and conf > CONF_TH and area > ELEPHANT_SIZE_TH:
                 detections.append(0)
 
+            # human rule
             if cls == 1 and conf > CONF_TH and area > HUMAN_SIZE_TH:
                 detections.append(1)
 
     return detections
-
 
 # ================= ROUTES =================
 
 @app.route("/")
 def home():
     return "Wildlife RGB AI Running"
-
 
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -107,6 +116,7 @@ def predict():
         return jsonify({"error": "no image"}), 400
 
     try:
+
         file = request.files["image"].read()
 
         img = cv2.imdecode(
@@ -117,13 +127,13 @@ def predict():
         if img is None:
             return jsonify({"error": "invalid image"}), 400
 
-    except:
+    except Exception as e:
         return jsonify({"error": "decode failed"}), 400
 
     votes = {0: 0, 1: 0}
 
     # frame voting
-    for i in range(3):
+    for _ in range(3):
 
         results = model(
             img,
@@ -147,14 +157,13 @@ def predict():
 
     latency = round(time.time() - start, 3)
 
-    print("Votes:", votes, "Result:", label)
+    print("Votes:", votes, "Result:", label, "Latency:", latency)
 
     return jsonify({
         "label": label,
         "votes": votes,
         "latency": latency
     })
-
 
 # ================= RUN =================
 
