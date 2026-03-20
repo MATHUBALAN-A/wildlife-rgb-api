@@ -4,27 +4,48 @@ import numpy as np
 import cv2
 import time
 import os
+import requests
 
 app = Flask(__name__)
 
-# ================= MODEL LOAD =================
+# ================= MODEL DOWNLOAD =================
 
-print("===== Wildlife RGB AI Starting =====")
-print("Loading YOLO model...")
+MODEL_PATH = "best.pt"
 
-model = YOLO("best.pt")
+FILE_ID = "122HAvIL6ZQkNtj_oxUuVDvzjEwjXLlTy"
+DOWNLOAD_URL = f"https://drive.google.com/uc?id={FILE_ID}"
 
-print("✅ Model Loaded Successfully")
+def download_model():
+
+    if os.path.exists(MODEL_PATH):
+        print("✅ Model already exists")
+        return
+
+    print("⬇ Downloading model from Google Drive...")
+
+    r = requests.get(DOWNLOAD_URL, stream=True)
+
+    with open(MODEL_PATH, "wb") as f:
+        for chunk in r.iter_content(1024*1024):
+            if chunk:
+                f.write(chunk)
+
+    print("✅ Model Downloaded")
+
+download_model()
+
+print("🚀 Loading YOLO model...")
+model = YOLO(MODEL_PATH)
+print("✅ Model Loaded")
 
 # ================= CONFIG =================
 
 CONF_TH = 0.30
-ELEPHANT_SIZE_TH = 0.05     # elephant must be large
-HUMAN_SIZE_TH = 0.01        # human can be smaller
-
+ELEPHANT_SIZE_TH = 0.05
+HUMAN_SIZE_TH = 0.01
 VOTE_REQUIRED = 2
 
-# ================= VERIFICATION =================
+# ================= VERIFY =================
 
 def verify_detection(results):
 
@@ -49,25 +70,19 @@ def verify_detection(results):
 
             area = (w * h) / (H * W)
 
-            # ---------- ELEPHANT RULE ----------
-            if cls == 0:
-                if conf > CONF_TH and area > ELEPHANT_SIZE_TH:
-                    detections.append(0)
+            if cls == 0 and conf > CONF_TH and area > ELEPHANT_SIZE_TH:
+                detections.append(0)
 
-            # ---------- HUMAN RULE ----------
-            if cls == 1:
-                if conf > CONF_TH and area > HUMAN_SIZE_TH:
-                    detections.append(1)
+            if cls == 1 and conf > CONF_TH and area > HUMAN_SIZE_TH:
+                detections.append(1)
 
     return detections
-
 
 # ================= ROUTES =================
 
 @app.route("/")
 def home():
     return "Wildlife RGB AI Running"
-
 
 @app.route("/predict", methods=["POST"])
 def predict():
@@ -77,69 +92,41 @@ def predict():
     if "image" not in request.files:
         return jsonify({"error": "no image"}), 400
 
-    try:
+    file = request.files["image"].read()
 
-        file = request.files["image"].read()
+    img = cv2.imdecode(np.frombuffer(file, np.uint8), cv2.IMREAD_COLOR)
 
-        img = cv2.imdecode(
-            np.frombuffer(file, np.uint8),
-            cv2.IMREAD_COLOR
-        )
-
-        if img is None:
-            return jsonify({"error": "bad image"}), 400
-
-    except:
-        return jsonify({"error": "decode failed"}), 400
-
-    # ============ FRAME VOTING ============
-
-    votes = {0: 0, 1: 0}
+    votes = {0:0,1:0}
 
     for i in range(3):
 
-        results = model(
-            img,
-            imgsz=416,
-            conf=0.25,
-            verbose=False
-        )
+        results = model(img, imgsz=416, conf=0.25, verbose=False)
 
         dets = verify_detection(results)
 
         for d in dets:
-            votes[d] += 1
+            votes[d]+=1
 
-    print("Votes:", votes)
-
-    # ============ DECISION LOGIC ============
-
-    label = "uncertain"
+    label="uncertain"
 
     if votes[0] >= VOTE_REQUIRED:
-        label = "elephant"
+        label="elephant"
 
     elif votes[1] >= VOTE_REQUIRED:
-        label = "human"
+        label="human"
 
-    latency = round(time.time() - start, 3)
-
-    print("Result:", label, "Latency:", latency)
+    latency = round(time.time()-start,3)
 
     return jsonify({
-        "label": label,
-        "votes": votes,
-        "latency": latency
+        "label":label,
+        "votes":votes,
+        "latency":latency
     })
-
 
 # ================= RUN =================
 
 if __name__ == "__main__":
 
-    port = int(os.environ.get("PORT", 10000))
+    port = int(os.environ.get("PORT",10000))
 
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    app.run(host="0.0.0.0",port=port)

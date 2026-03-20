@@ -2,6 +2,7 @@ flask
 ultralytics
 opencv-python-headless
 numpy
+requests
 torch
 torchvision
 pillow
